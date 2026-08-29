@@ -173,25 +173,37 @@ class WP_WebMCP_Form_Detector {
     /**
      * Scan site for forms (admin utility).
      *
+     * IMPORTANT: We can't search raw stored post_content for a literal
+     * "<form" string — many forms (shortcodes like [medifit_contact_form],
+     * Gravity Forms, WPForms, dynamic Gutenberg blocks) only produce actual
+     * <form> markup once rendered. The raw DB content just has the shortcode
+     * or block comment, never the tag itself. So instead of querying with
+     * 's' => '<form' (which searches raw content and misses all of these),
+     * we pull all published content and render shortcodes via do_shortcode()
+     * before checking for <form> tags.
+     *
      * @param WP_REST_Request $request Request object.
      * @return WP_REST_Response
      */
     public function scan_site_forms( $request ) {
         $results = array();
 
-        // Query published posts/pages that likely contain forms.
         $query = new WP_Query(
             array(
                 'post_type'      => 'any',
-                'post_status'     => 'publish',
-                'posts_per_page'  => 100,
-                's'               => '<form',
+                'post_status'    => 'publish',
+                'posts_per_page' => 100,
             )
         );
 
         if ( $query->have_posts() ) {
             foreach ( $query->posts as $post ) {
-                $form_count = preg_match_all( '/<form[^>]*>/i', $post->post_content );
+                // Render shortcodes so shortcode-based forms (and anything
+                // else that only becomes a <form> tag at render time) get
+                // caught, not just literal HTML already in the raw content.
+                $rendered   = do_shortcode( $post->post_content );
+                $form_count = preg_match_all( '/<form[^>]*>/i', $rendered );
+
                 if ( $form_count > 0 ) {
                     $results[] = array(
                         'id'         => $post->ID,

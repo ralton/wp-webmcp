@@ -44,8 +44,13 @@ class WP_WebMCP_Tool_Registry {
         // Allow programmatic tool registration.
         add_action( 'wp_webmcp_register_tools', array( $this, 'register_default_tools' ) );
 
-        // REST API for tool CRUD.
+        // REST API for tool CRUD + public discovery + invocation.
         add_action( 'rest_api_init', array( $this, 'register_rest_endpoints' ) );
+
+        // Fire the registration hook now so default tools actually get seeded.
+        // register_tool() is idempotent (duplicate-name guard), so calling this
+        // on every 'init' is safe — it only writes to the option on first run.
+        do_action( 'wp_webmcp_register_tools' );
     }
 
     /**
@@ -69,7 +74,7 @@ class WP_WebMCP_Tool_Registry {
                     'required'   => array( 'query' ),
                 ),
                 'callback'    => 'wp_webmcp_tool_search_site',
-                'enabled'     => false,
+                'enabled'     => true,
             )
         );
     }
@@ -188,19 +193,25 @@ class WP_WebMCP_Tool_Registry {
     }
 
     /**
-     * Register REST endpoints for tool management.
+     * Register REST endpoints for tool management, discovery, and invocation.
+     *
+     * GET  /tools            — PUBLIC: list enabled tools for AI agent discovery.
+     * POST /tools            — ADMIN:  create a new tool.
+     * GET  /tools/all        — ADMIN:  list ALL tools (incl. disabled) for admin UI.
+     * PUT  /tools/{name}     — ADMIN:  update a tool.
+     * DEL  /tools/{name}     — ADMIN:  delete a tool.
+     * POST /tools/{name}/invoke — PUBLIC (nonce-checked): execute a tool's callback.
      */
     public function register_rest_endpoints() {
+        // GET /tools — public discovery (returns only enabled tools, no callbacks).
         register_rest_route(
             'wp-webmcp/v1',
             '/tools',
             array(
                 array(
                     'methods'             => 'GET',
-                    'callback'            => array( $this, 'rest_list_tools' ),
-                    'permission_callback' => function () {
-                        return current_user_can( 'manage_options' );
-                    },
+                    'callback'            => array( $this, 'rest_list_tools_public' ),
+                    'permission_callback' => '__return_true',
                 ),
                 array(
                     'methods'             => 'POST',
@@ -209,6 +220,33 @@ class WP_WebMCP_Tool_Registry {
                         return current_user_can( 'manage_options' );
                     },
                 ),
+            )
+        );
+
+        // GET /tools/all — admin-only: list ALL tools including disabled (for admin UI).
+        register_rest_route(
+            'wp-webmcp/v1',
+            '/tools/all',
+            array(
+                'methods'             => 'GET',
+                'callback'            => array( $this, 'rest_list_tools' ),
+                'permission_callback' => function () {
+                    return current_user_can( 'manage_options' );
+                },
+            )
+        );
+
+        // POST /tools/{name}/invoke — PUBLIC endpoint (nonce-checked), this is what
+        // the browser's WebMCP runtime calls when navigator.mcp actually invokes a
+        // registered tool's handler. Must be registered BEFORE the /{name} route below
+        // so the /invoke suffix doesn't get swallowed by the generic name pattern.
+        register_rest_route(
+            'wp-webmcp/v1',
+            '/tools/(?P<name>[a-zA-Z0-9_-]+)/invoke',
+            array(
+                'methods'             => 'POST',
+                'callback'            => array( $this, 'rest_invoke_tool' ),
+                'permission_callback' => array( $this, 'check_invoke_nonce' ),
             )
         );
 
@@ -235,7 +273,56 @@ class WP_WebMCP_Tool_Registry {
     }
 
     /**
-     * REST: List all tools.
+     * Permission check for the public /invoke endpoint.
+     *
+     * Tools are meant to be callable by anonymous site visitors (via their
+     * browser's WebMCP agent), so this isn't an auth check — it's a same-origin
+     * CSRF guard via WP's standard REST nonce.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return bool|WP_Error
+     */
+    public function check_invoke_nonce( $request ) {
+        $nonce = $request->get_header( 'X-WP-Nonce' );
+
+        if ( ! $nonce || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+            return new WP_Error( 'invalid_nonce', 'Invalid or missing nonce.', array( 'status' => 403 ) );
+        }
+
+        return true;
+    }
+
+    /**
+     * REST: List enabled tools for public discovery.
+     *
+     * Returns only enabled tools and strips sensitive fields (callbacks)
+     * so AI agents can discover what's available without exposing internals.
+     *
+     * @return WP_REST_Response
+     */
+    public function rest_list_tools_public() {
+        $tools  = wp_webmcp_get_tools();
+        $public = array();
+
+        foreach ( $tools as $name => $tool ) {
+            if ( empty( $tool['enabled'] ) ) {
+                continue;
+            }
+
+            // Strip callback — agents invoke via REST, not direct PHP.
+            $public[ $name ] = array(
+                'name'        => $name,
+                'description' => isset( $tool['description'] ) ? $tool['description'] : '',
+                'type'        => isset( $tool['type'] ) ? $tool['type'] : 'imperative',
+                'schema'      => isset( $tool['schema'] ) ? $tool['schema'] : array(),
+            );
+        }
+
+        return rest_ensure_response( array_values( $public ) );
+    }
+
+    /**
+     * REST: List ALL tools (admin only) — includes disabled tools and callbacks.
      *
      * @return WP_REST_Response
      */
@@ -266,7 +353,7 @@ class WP_WebMCP_Tool_Registry {
      * @return WP_REST_Response|WP_Error
      */
     public function rest_update_tool( $request ) {
-        $name = $request->get_param( 'name' );
+        $name   = $request->get_param( 'name' );
         $result = $this->update_tool( $name, $request->get_json_params() );
 
         if ( is_wp_error( $result ) ) {
@@ -283,7 +370,7 @@ class WP_WebMCP_Tool_Registry {
      * @return WP_REST_Response|WP_Error
      */
     public function rest_delete_tool( $request ) {
-        $name = $request->get_param( 'name' );
+        $name   = $request->get_param( 'name' );
         $result = $this->delete_tool( $name );
 
         if ( is_wp_error( $result ) ) {
@@ -291,6 +378,41 @@ class WP_WebMCP_Tool_Registry {
         }
 
         return rest_ensure_response( array( 'success' => true ) );
+    }
+
+    /**
+     * REST: Invoke a tool's callback. This is the endpoint the browser's
+     * WebMCP runtime hits when navigator.mcp actually calls a registered tool.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return WP_REST_Response|WP_Error
+     */
+    public function rest_invoke_tool( $request ) {
+        $name  = $request->get_param( 'name' );
+        $tools = wp_webmcp_get_tools();
+
+        if ( ! isset( $tools[ $name ] ) ) {
+            return new WP_Error( 'not_found', sprintf( 'Tool "%s" not found.', $name ), array( 'status' => 404 ) );
+        }
+
+        $tool = $tools[ $name ];
+
+        if ( empty( $tool['enabled'] ) ) {
+            return new WP_Error( 'disabled', sprintf( 'Tool "%s" is disabled.', $name ), array( 'status' => 403 ) );
+        }
+
+        $callback = isset( $tool['callback'] ) ? $tool['callback'] : '';
+
+        if ( empty( $callback ) || ! is_callable( $callback ) ) {
+            return new WP_Error( 'no_callback', sprintf( 'Tool "%s" has no valid callback.', $name ), array( 'status' => 500 ) );
+        }
+
+        $params = $request->get_json_params();
+        $input  = isset( $params['input'] ) ? $params['input'] : array();
+
+        $result = call_user_func( $callback, $input );
+
+        return rest_ensure_response( $result );
     }
 }
 
