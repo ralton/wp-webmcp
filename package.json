@@ -1,0 +1,16 @@
+{
+  "name": "wp-webmcp",
+  "version": "0.1.0",
+  "description": "WebMCP for WordPress — expose your site as agent-ready tools for AI agents",
+  "author": "Russ Alton <russ@medifitweightloss.com>",
+  "license": "GPL-2.0-or-later",
+  "keywords": ["webmcp", "mcp", "ai", "agents", "wordpress", "tools"],
+  "homepage": "https://github.com/ralton/wp-webmcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ralton/wp-webmcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ralton/wp-webmcp/issues"
+  }
+}

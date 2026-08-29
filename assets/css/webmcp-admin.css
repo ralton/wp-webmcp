@@ -1,0 +1,26 @@
+/* WP-WebMCP Admin Styles */
+
+.wp-webmcp-tabs {
+    margin: 20px 0;
+}
+
+.wp-webmcp-tab-content {
+    max-width: 900px;
+}
+
+.wp-webmcp-tab-content .form-table th {
+    width: 200px;
+}
+
+.wp-webmcp-tab-content .code {
+    font-family: monospace;
+    font-size: 13px;
+}
+
+#wp-webmcp-scan-results table {
+    margin-top: 15px;
+}
+
+#wp-webmcp-scan-results table td a {
+    font-size: 12px;
+}
