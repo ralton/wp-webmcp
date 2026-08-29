@@ -2,6 +2,9 @@
  * WP-WebMCP Runtime
  * Core JavaScript for registering WebMCP tools with the browser.
  *
+ * Uses the real Chrome WebMCP Imperative API: document.modelContext.
+ * Reference: https://developer.chrome.com/docs/ai/webmcp/imperative-api
+ *
  * @package WP_WebMCP
  */
 
@@ -18,12 +21,13 @@
     }
 
     /**
-     * Check if WebMCP API is available in this browser.
+     * Check if the WebMCP Imperative API is available in this browser.
+     * The real API lives on document.modelContext (not navigator.mcp).
      */
     function isWebMCPAvailable() {
-        return typeof navigator !== 'undefined' &&
-               typeof navigator.mcp !== 'undefined' &&
-               typeof navigator.mcp.registerTool === 'function';
+        return typeof document !== 'undefined' &&
+               typeof document.modelContext !== 'undefined' &&
+               typeof document.modelContext.registerTool === 'function';
     }
 
     /**
@@ -36,14 +40,13 @@
         }
 
         try {
-            await navigator.mcp.registerTool({
+            const toolDef = {
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.schema || { type: 'object', properties: {} },
-                handler: async (input) => {
+                execute: async (input, options) => {
                     log('Tool called:', tool.name, input);
 
-                    // Route to callback via REST API.
                     const response = await fetch(config.restUrl + '/tools/' + tool.name + '/invoke', {
                         method: 'POST',
                         headers: {
@@ -51,13 +54,22 @@
                             'X-WP-Nonce': config.nonce,
                         },
                         body: JSON.stringify({ input: input }),
+                        signal: options && options.signal,
                     });
 
                     const result = await response.json();
                     log('Tool result:', tool.name, result);
                     return result;
                 },
-            });
+            };
+
+            // Optional hints for the agent (safe defaults for read-only tools
+            // like search — override per-tool via tool.annotations if set).
+            if (tool.annotations) {
+                toolDef.annotations = tool.annotations;
+            }
+
+            await document.modelContext.registerTool(toolDef);
 
             log('Tool registered:', tool.name);
             return true;

@@ -2,6 +2,12 @@
  * WP-WebMCP Declarative
  * Auto-annotates detected HTML forms with WebMCP declarative attributes.
  *
+ * Uses the real Chrome WebMCP Declarative API, which reads plain HTML
+ * attributes directly on the <form> element and its fields — there is
+ * no JSON-schema data attribute; the browser derives the schema itself
+ * from field names/types and associated <label> elements.
+ * Reference: https://developer.chrome.com/docs/ai/webmcp/declarative-api
+ *
  * @package WP_WebMCP
  */
 
@@ -34,88 +40,68 @@
     }
 
     /**
-     * Annotate a form with WebMCP declarative attributes.
-     *
-     * WebMCP declarative API uses data attributes on form elements:
-     * data-webmcp-tool: tool name
-     * data-webmcp-description: human-readable description
-     * data-webmcp-schema: JSON schema for inputs
+     * Annotate a form with the real WebMCP declarative attributes:
+     * toolname + tooldescription on the <form>, and toolparamdescription
+     * on individual fields that don't already have an associated <label>.
      */
     function annotateForm(formElement, formData) {
-        // Determine tool name from form data or ID.
-        const toolName = formData.id || formElement.getAttribute('id') || 'wp_form';
+        // Don't clobber a form that's already been manually annotated
+        // (e.g. a developer hand-wrote toolname/tooldescription in the
+        // page's HTML/shortcode output).
+        if (formElement.hasAttribute('toolname')) {
+            log('Form already annotated, skipping:', formElement.getAttribute('toolname'));
+            return;
+        }
 
-        // Build a sensible tool name (snake_case).
-        const cleanName = toolName
+        const rawName = formData.id || formElement.getAttribute('id') || 'wp_form';
+        const cleanName = rawName
             .replace(/[^a-zA-Z0-9_-]/g, '_')
             .replace(/_+/g, '_')
             .toLowerCase();
 
-        // Set WebMCP declarative attributes.
-        formElement.setAttribute('data-webmcp-tool', cleanName);
-        formElement.setAttribute('data-webmcp-description',
-            'Submit the ' + (formData.plugin || 'website') + ' form on this page.');
+        formElement.setAttribute('toolname', cleanName);
+        formElement.setAttribute(
+            'tooldescription',
+            'Submit the ' + (formData.plugin || 'website') + ' form on this page.'
+        );
 
-        // Annotate individual input fields with schema hints.
+        // Only fields without a discoverable label/aria-description need
+        // an explicit toolparamdescription — the browser reads <label>
+        // and aria-description automatically otherwise.
         const inputs = formElement.querySelectorAll('input, select, textarea');
-        const schemaProps = {};
-
         inputs.forEach(function (input) {
-            const name = input.getAttribute('name');
-            if (!name) return;
+            if (input.hasAttribute('toolparamdescription')) {
+                return;
+            }
+            if (hasDiscoverableLabel(input)) {
+                return;
+            }
 
-            const type = input.getAttribute('type') || input.tagName.toLowerCase();
-            let schemaType = 'string';
-
-            if (type === 'email') schemaType = 'string';
-            else if (type === 'number' || type === 'range') schemaType = 'number';
-            else if (type === 'checkbox') schemaType = 'boolean';
-            else if (type === 'date') schemaType = 'string';
-            else if (input.tagName === 'SELECT') schemaType = 'string';
-
-            schemaProps[name] = {
-                type: schemaType,
-                label: getLabel(input),
-            };
-
-            // Mark required fields.
-            if (input.hasAttribute('required')) {
-                if (!schemaProps[name].required) {
-                    schemaProps[name].required = true;
-                }
+            const fallback = input.getAttribute('placeholder') || input.getAttribute('name');
+            if (fallback) {
+                input.setAttribute('toolparamdescription', fallback);
             }
         });
 
-        // Embed schema as data attribute.
-        formElement.setAttribute('data-webmcp-schema', JSON.stringify({
-            type: 'object',
-            properties: schemaProps,
-        }));
-
-        log('Annotated form:', cleanName, schemaProps);
+        log('Annotated form:', cleanName);
     }
 
     /**
-     * Get a human-readable label for an input.
+     * Whether the browser can already find a description for this field
+     * on its own (associated <label>, or aria-label/aria-description).
      */
-    function getLabel(input) {
-        // Try associated <label>.
+    function hasDiscoverableLabel(input) {
         const id = input.getAttribute('id');
-        if (id) {
-            const label = document.querySelector('label[for="' + id + '"]');
-            if (label) return label.textContent.trim();
+        if (id && document.querySelector('label[for="' + id + '"]')) {
+            return true;
         }
-
-        // Try aria-label.
-        const ariaLabel = input.getAttribute('aria-label');
-        if (ariaLabel) return ariaLabel;
-
-        // Try placeholder.
-        const placeholder = input.getAttribute('placeholder');
-        if (placeholder) return placeholder;
-
-        // Fallback to name.
-        return input.getAttribute('name') || 'field';
+        if (input.closest('label')) {
+            return true;
+        }
+        if (input.getAttribute('aria-label') || input.getAttribute('aria-description')) {
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -132,7 +118,6 @@
         log('Detected ' + formsData.length + ' form(s).');
 
         formsData.forEach(function (formData, index) {
-            // Find the form element on the page.
             const selector = formData.id ? '#' + CSS.escape(formData.id) : 'form:nth-of-type(' + (index + 1) + ')';
             const formElement = document.querySelector(selector);
 
