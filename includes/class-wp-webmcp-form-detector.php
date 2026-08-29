@@ -69,6 +69,21 @@ class WP_WebMCP_Form_Detector {
     /**
      * Detect forms in post content.
      *
+     * IMPORTANT: If a <form> has no native `id` attribute, we can't just
+     * hand the JS a made-up tracking id like "wp-webmcp-form-0" and expect
+     * `document.querySelector(\'#\' + id)` to find it later — that id was
+     * never actually written into the DOM, so the lookup silently fails and
+     * the form never gets its `toolname`/`tooldescription` declarative
+     * attributes. Positional (nth-of-type) fallback matching on the client
+     * is fragile too, since other forms elsewhere on the page (header
+     * search, footer newsletter popups, etc.) can shift the index.
+     *
+     * The reliable fix: since we're already rewriting $content here
+     * (this runs on `the_content` after shortcodes have expanded to real
+     * markup), inject the tracking id directly into the rendered <form>
+     * tag when it lacks one. That guarantees the id we hand to the JS is
+     * always a real, queryable element in the final page HTML.
+     *
      * @param string $content Post content.
      * @return string
      */
@@ -77,21 +92,40 @@ class WP_WebMCP_Form_Detector {
             return $content;
         }
 
-        // Pattern: find all <form> elements.
-        if ( preg_match_all( '/<form[^>]*>/i', $content, $matches ) ) {
-            foreach ( $matches[0] as $index => $form_tag ) {
-                $form_id    = $this->extract_attribute( $form_tag, 'id' );
-                $form_action = $this->extract_attribute( $form_tag, 'action' );
-                $form_class = $this->extract_attribute( $form_tag, 'class' );
+        if ( ! preg_match_all( '/<form[^>]*>/i', $content, $matches, PREG_OFFSET_CAPTURE ) ) {
+            return $content;
+        }
 
-                $this->detected_forms[] = array(
-                    'id'         => $form_id ?: 'wp-webmcp-form-' . $index,
-                    'action'     => $form_action,
-                    'class'      => $form_class,
-                    'plugin'     => $this->detect_form_plugin( $form_tag, $form_class ),
-                    'type'       => 'declarative',
-                );
+        $offset_shift = 0;
+
+        foreach ( $matches[0] as $index => $match ) {
+            $form_tag_original = $match[0];
+            $tag_offset         = $match[1] + $offset_shift;
+
+            $form_id     = $this->extract_attribute( $form_tag_original, 'id' );
+            $form_action = $this->extract_attribute( $form_tag_original, 'action' );
+            $form_class  = $this->extract_attribute( $form_tag_original, 'class' );
+
+            $tracking_id = $form_id ?: 'wp-webmcp-form-' . $index;
+
+            // No native id — write one into the actual tag so it's a real,
+            // findable DOM element for the declarative JS later.
+            if ( ! $form_id ) {
+                $form_tag_new = preg_replace( '/^<form/i', '<form id="' . esc_attr( $tracking_id ) . '"', $form_tag_original, 1 );
+
+                if ( $form_tag_new && $form_tag_new !== $form_tag_original ) {
+                    $content       = substr_replace( $content, $form_tag_new, $tag_offset, strlen( $form_tag_original ) );
+                    $offset_shift += strlen( $form_tag_new ) - strlen( $form_tag_original );
+                }
             }
+
+            $this->detected_forms[] = array(
+                'id'         => $tracking_id,
+                'action'     => $form_action,
+                'class'      => $form_class,
+                'plugin'     => $this->detect_form_plugin( $form_tag_original, $form_class ),
+                'type'       => 'declarative',
+            );
         }
 
         return $content;
