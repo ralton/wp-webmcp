@@ -178,10 +178,14 @@ class WP_WebMCP_Admin {
                                     <?php echo $tool['enabled'] ? '<span style="color:green;">✓ Enabled</span>' : '<span style="color:#ccc;">○ Disabled</span>'; ?>
                                 </td>
                                 <td>
-                                    <button class="button button-small wp-webmcp-toggle-tool" data-tool="<?php echo esc_attr( $name ); ?>">
-                                        <?php echo $tool['enabled'] ? 'Disable' : 'Enable'; ?>
-                                    </button>
-                                    <button class="button button-small wp-webmcp-delete-tool" data-tool="<?php echo esc_attr( $name ); ?>">Delete</button>
+                                    <?php if ( 'declarative' === $tool['type'] ) : ?>
+                                        <button class="button button-small wp-webmcp-toggle-tool" data-tool="<?php echo esc_attr( $name ); ?>">
+                                            <?php echo $tool['enabled'] ? 'Disable' : 'Enable'; ?>
+                                        </button>
+                                        <button class="button button-small wp-webmcp-delete-tool" data-tool="<?php echo esc_attr( $name ); ?>">Delete</button>
+                                    <?php else : ?>
+                                        <em>Managed in PHP</em>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -189,34 +193,8 @@ class WP_WebMCP_Admin {
                     </tbody>
                 </table>
 
-                <h3>Add New Tool</h3>
-                <table class="form-table">
-                    <tr>
-                        <th><label for="tool_name">Tool Name</label></th>
-                        <td><input type="text" id="tool_name" class="regular-text" placeholder="e.g., book_consultation" /></td>
-                    </tr>
-                    <tr>
-                        <th><label for="tool_description">Description</label></th>
-                        <td><input type="text" id="tool_description" class="regular-text" placeholder="What does this tool do?" /></td>
-                    </tr>
-                    <tr>
-                        <th><label for="tool_type">Type</label></th>
-                        <td>
-                            <select id="tool_type">
-                                <option value="declarative">Declarative (form-based)</option>
-                                <option value="imperative">Imperative (custom JS)</option>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th><label for="tool_schema">JSON Schema</label></th>
-                        <td>
-                            <textarea id="tool_schema" class="large-text code" rows="8" placeholder='{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}'></textarea>
-                            <p class="description">JSON Schema defining the tool's input parameters.</p>
-                        </td>
-                    </tr>
-                </table>
-                <button class="button button-primary" id="wp-webmcp-add-tool">Add Tool</button>
+                <h3>Developer-registered tools</h3>
+                <p>Imperative tools are registered by trusted plugin or theme PHP code, not through this screen. This prevents database options from selecting executable callbacks.</p>
             </div>
 
             <div id="tab-scan" class="wp-webmcp-tab-content" style="display:none;">
