@@ -12,5 +12,9 @@
   },
   "bugs": {
     "url": "https://github.com/ralton/wp-webmcp/issues"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "lint": "node --check assets/js/webmcp-admin.js && node --check assets/js/webmcp-declarative.js && node --check assets/js/webmcp-debug.js && node --check assets/js/webmcp-runtime.js"
   }
 }

@@ -1,82 +1,30 @@
 /**
  * WP-WebMCP Admin
- * Admin UI JavaScript for tool management and form scanning.
+ * Admin UI interactions for tool management and form scanning.
  *
  * @package WP_WebMCP
  */
-
 (function ($) {
     'use strict';
 
     const Admin = window.WP_WebMCP_Admin || {};
 
-    // Tab switching.
     $('.wp-webmcp-tabs .nav-tab').on('click', function (e) {
         e.preventDefault();
         const target = $(this).data('tab');
-
         $('.wp-webmcp-tabs .nav-tab').removeClass('nav-tab-active');
         $(this).addClass('nav-tab-active');
-
         $('.wp-webmcp-tab-content').hide();
         $('#tab-' + target).show();
     });
 
-    // Add tool.
-    $('#wp-webmcp-add-tool').on('click', function () {
-        const name = $('#tool_name').val().trim();
-        const description = $('#tool_description').val().trim();
-        const type = $('#tool_type').val();
-        let schema = {};
-
-        try {
-            schema = JSON.parse($('#tool_schema').val() || '{}');
-        } catch (e) {
-            alert('Invalid JSON Schema. Please check your syntax.');
-            return;
-        }
-
-        if (!name || !description) {
-            alert('Tool name and description are required.');
-            return;
-        }
-
-        $.ajax({
-            url: Admin.restUrl + '/tools',
-            method: 'POST',
-            beforeSend: function (xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', Admin.nonce);
-                xhr.setRequestHeader('Content-Type', 'application/json');
-            },
-            data: JSON.stringify({
-                name: name,
-                description: description,
-                type: type,
-                schema: schema,
-                enabled: true,
-            }),
-            success: function () {
-                alert('Tool added! Reload to see it in the list.');
-                location.reload();
-            },
-            error: function (xhr) {
-                const msg = xhr.responseJSON && xhr.responseJSON.message
-                    ? xhr.responseJSON.message
-                    : 'Failed to add tool.';
-                alert(msg);
-            },
-        });
-    });
-
-    // Toggle tool.
     $(document).on('click', '.wp-webmcp-toggle-tool', function () {
         const toolName = $(this).data('tool');
         const button = $(this);
         const row = button.closest('tr');
         const isEnabled = button.text() === 'Disable';
-
         $.ajax({
-            url: Admin.restUrl + '/tools/' + toolName,
+            url: Admin.restUrl + '/tools/' + encodeURIComponent(toolName),
             method: 'PUT',
             beforeSend: function (xhr) {
                 xhr.setRequestHeader('X-WP-Nonce', Admin.nonce);
@@ -84,73 +32,76 @@
             },
             data: JSON.stringify({ enabled: !isEnabled }),
             success: function () {
-                if (isEnabled) {
-                    button.text('Enable');
-                    row.find('td:nth-child(4)').html('<span style="color:#ccc;">○ Disabled</span>');
-                } else {
-                    button.text('Disable');
-                    row.find('td:nth-child(4)').html('<span style="color:green;">✓ Enabled</span>');
-                }
+                button.text(isEnabled ? 'Enable' : 'Disable');
+                row.find('td:nth-child(4)').text(isEnabled ? '○ Disabled' : '✓ Enabled');
             },
-            error: function () {
-                alert('Failed to toggle tool.');
-            },
+            error: function () { alert('Failed to toggle tool.'); },
         });
     });
 
-    // Delete tool.
     $(document).on('click', '.wp-webmcp-delete-tool', function () {
         const toolName = $(this).data('tool');
         if (!confirm('Delete tool "' + toolName + '"?')) return;
-
         $.ajax({
-            url: Admin.restUrl + '/tools/' + toolName,
+            url: Admin.restUrl + '/tools/' + encodeURIComponent(toolName),
             method: 'DELETE',
-            beforeSend: function (xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', Admin.nonce);
-            },
-            success: function () {
-                location.reload();
-            },
-            error: function () {
-                alert('Failed to delete tool.');
-            },
+            beforeSend: function (xhr) { xhr.setRequestHeader('X-WP-Nonce', Admin.nonce); },
+            success: function () { location.reload(); },
+            error: function () { alert('Failed to delete tool.'); },
         });
     });
 
-    // Scan site for forms.
+    function isSafeHttpUrl(value) {
+        try {
+            const url = new URL(value, window.location.origin);
+            return url.protocol === 'http:' || url.protocol === 'https:';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function renderScanResults(resultsDiv, response) {
+        resultsDiv.empty();
+        if (!Array.isArray(response) || response.length === 0) {
+            resultsDiv.append($('<p>').text('No forms found on published pages.'));
+            return;
+        }
+        const table = $('<table>', { class: 'wp-list-table widefat striped' });
+        const body = $('<tbody>');
+        table.append($('<thead>').append($('<tr>')
+            .append($('<th>').text('Page'))
+            .append($('<th>').text('URL'))
+            .append($('<th>').text('Forms'))
+            .append($('<th>').text('Type'))));
+        response.forEach(function (page) {
+            const row = $('<tr>');
+            row.append($('<td>').text(page.title));
+            const urlCell = $('<td>');
+            if (isSafeHttpUrl(page.url)) {
+                urlCell.append($('<a>', { target: '_blank', rel: 'noopener noreferrer' }).attr('href', page.url).text(page.url));
+            } else {
+                urlCell.text('Unavailable');
+            }
+            row.append(urlCell);
+            row.append($('<td>').text(page.form_count));
+            row.append($('<td>').text(page.post_type));
+            body.append(row);
+        });
+        table.append(body);
+        resultsDiv.append(table);
+    }
+
     $('#wp-webmcp-scan').on('click', function () {
         const button = $(this);
         const resultsDiv = $('#wp-webmcp-scan-results');
-
         button.prop('disabled', true).text('Scanning...');
-        resultsDiv.html('<p>Scanning published pages for forms...</p>');
-
+        resultsDiv.empty().append($('<p>').text('Scanning published pages for forms...'));
         $.ajax({
-            url: Admin.restUrl + '/scan',
-            method: 'GET',
-            beforeSend: function (xhr) {
-                xhr.setRequestHeader('X-WP-Nonce', Admin.nonce);
-            },
-            success: function (response) {
-                if (response.length === 0) {
-                    resultsDiv.html('<p>No forms found on published pages.</p>');
-                    return;
-                }
-
-                let html = '<table class="wp-list-table widefat striped"><thead><tr><th>Page</th><th>URL</th><th>Forms</th><th>Type</th></tr></thead><tbody>';
-                response.forEach(function (page) {
-                    html += '<tr><td>' + page.title + '</td><td><a href="' + page.url + '" target="_blank">' + page.url + '</a></td><td>' + page.form_count + '</td><td>' + page.post_type + '</td></tr>';
-                });
-                html += '</tbody></table>';
-                resultsDiv.html(html);
-            },
-            error: function () {
-                resultsDiv.html('<p style="color:red;">Scan failed. Check your permissions.</p>');
-            },
-            complete: function () {
-                button.prop('disabled', false).text('Scan Site');
-            },
+            url: Admin.restUrl + '/scan', method: 'GET',
+            beforeSend: function (xhr) { xhr.setRequestHeader('X-WP-Nonce', Admin.nonce); },
+            success: function (response) { renderScanResults(resultsDiv, response); },
+            error: function () { resultsDiv.empty().append($('<p>').css('color', 'red').text('Scan failed. Check your permissions.')); },
+            complete: function () { button.prop('disabled', false).text('Scan Site'); },
         });
     });
 })(jQuery);

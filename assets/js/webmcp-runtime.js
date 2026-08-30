@@ -47,19 +47,30 @@
                 execute: async (input, options) => {
                     log('Tool called:', tool.name, input);
 
-                    const response = await fetch(config.restUrl + '/tools/' + tool.name + '/invoke', {
+                    const response = await fetch(config.restUrl + '/tools/' + encodeURIComponent(tool.name) + '/invoke', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-WP-Nonce': config.nonce,
-                        },
+                        credentials: 'same-origin',
+                        headers: Object.assign(
+                            { 'Content-Type': 'application/json' },
+                            config.nonce ? { 'X-WP-Nonce': config.nonce } : {}
+                        ),
                         body: JSON.stringify({ input: input }),
                         signal: options && options.signal,
                     });
 
-                    const result = await response.json();
-                    log('Tool result:', tool.name, result);
-                    return result;
+                    const payload = await response.json().catch(function () {
+                        return { code: 'invalid_response', message: 'The site returned an invalid tool response.' };
+                    });
+                    if (!response.ok) {
+                        return {
+                            error: {
+                                code: payload.code || 'tool_request_failed',
+                                message: payload.message || 'The tool request failed.',
+                            },
+                        };
+                    }
+                    log('Tool result:', tool.name, payload);
+                    return payload;
                 },
             };
 

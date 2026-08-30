@@ -7,7 +7,7 @@ WP-WebMCP is a WordPress plugin that implements the [WebMCP](https://developer.c
 ## Features
 
 - **Declarative form annotation** — automatically exposes WordPress forms (Gutenberg, Contact Form 7, WPForms, Gravity Forms) as WebMCP tools
-- **Custom tool registry** — register imperative tools via admin UI (no coding required)
+- **Safe imperative tool registry** — register callbacks from trusted plugin or theme PHP code; database options cannot select executable callbacks
 - **Origin isolation & permissions policy** — handles HTTP headers automatically
 - **Form discovery** — scans your site and suggests forms to expose
 - **Debug mode** — browser console logging for tool registration testing
@@ -36,7 +36,32 @@ WebMCP lets your website declare structured tools that AI agents can call direct
 - **JSON Schema** — expected inputs and outputs
 - **Callback** — what happens when the tool is invoked
 
-WP-WebMCP handles all of this through a simple admin interface and automatic form detection.
+WP-WebMCP handles declarative annotation automatically. Imperative tools are a developer-only capability: callbacks are registered in trusted PHP code for the current request and are never read from database options.
+
+```php
+add_action( 'wp_webmcp_register_tools', function() {
+    WP_WebMCP_Tool_Registry::instance()->register_runtime_tool(
+        array(
+            'name'        => 'example_lookup',
+            'description' => 'Look up public example data.',
+            'schema'      => array(
+                'type'       => 'object',
+                'properties' => array(
+                    'query' => array( 'type' => 'string', 'minLength' => 1, 'maxLength' => 200 ),
+                ),
+                'required'   => array( 'query' ),
+            ),
+            'access'      => 'public', // Or 'authenticated'.
+            'annotations' => array( 'readOnlyHint' => true ),
+        ),
+        function( $input ) {
+            return array( 'query' => $input['query'] );
+        }
+    );
+} );
+```
+
+Public runtime invocations require a same-origin browser request and are rate-limited. Tools should default to read-only; any write-capable tool needs its own authorization and confirmation design before it is exposed.
 
 ## Roadmap
 

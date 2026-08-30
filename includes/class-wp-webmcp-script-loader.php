@@ -127,10 +127,15 @@ class WP_WebMCP_Script_Loader {
         $config = array(
             'debug'   => wp_webmcp_get_settings()['debug_mode'],
             'tools'   => $public_tools,
-            'ajaxUrl' => admin_url( 'admin-ajax.php' ),
             'restUrl' => rest_url( 'wp-webmcp/v1' ),
-            'nonce'   => wp_create_nonce( 'wp_rest' ),
         );
+
+        // A REST nonce is CSRF protection, not authorization. Only provide it
+        // to an authenticated visitor so WordPress cookie authentication can
+        // identify that visitor for tools that explicitly require sign-in.
+        if ( is_user_logged_in() ) {
+            $config['nonce'] = wp_create_nonce( 'wp_rest' );
+        }
 
         wp_localize_script( 'wp-webmcp-runtime', 'WP_WebMCP_Config', $config );
 
